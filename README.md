@@ -42,6 +42,7 @@ Have a look at the [examples to see Tiptap in action](https://tiptap.dev/example
 - [Basic example of the Tiptap editor.](https://codesandbox.io/p/devbox/editor-9x9dkd?embed=1&file=%2Fsrc%2FApp.js)
 - [Collaboration ready Tiptap CodeSandbox](https://codesandbox.io/p/devbox/collaboration-4stk94)
 - React notion-like block editor template: [Demo](https://templates.tiptap.dev/)
+- [Content AI Agent React Demo](./demos/content-ai-agent)
 
 ## About Tiptap
 

@@ -1,4 +1,6 @@
 packages:
   - 'packages/*'
+  - 'packages/extension-content-ai-agent'
   - 'packages-deprecated/*'
   - 'demos'
+  - 'demos/*'

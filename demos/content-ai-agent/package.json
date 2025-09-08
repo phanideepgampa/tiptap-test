@@ -10,7 +10,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@tiptap/react": "workspace:^",
-    "@tiptap/extension-starter-kit": "workspace:^",
+    "@tiptap/starter-kit": "workspace:^",
     "@tiptap/extension-content-ai-agent": "workspace:^"
   },
   "devDependencies": {

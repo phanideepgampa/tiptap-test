@@ -8,4 +8,5 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   format: ['esm', 'cjs'],
+  external: ['@tiptap/core', '@tiptap/pm/state', '@tiptap/pm/view', 'diff-match-patch'],
 })

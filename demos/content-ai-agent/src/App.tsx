@@ -1,6 +1,8 @@
+import './styles.css'
+
 import ContentAiAgent from '@tiptap/extension-content-ai-agent'
-import StarterKit from '@tiptap/extension-starter-kit'
 import { EditorContent, useEditor } from '@tiptap/react'
+import StarterKit from '@tiptap/starter-kit'
 import type { Diff } from 'diff-match-patch'
 import React, { useState } from 'react'
 
@@ -42,20 +44,45 @@ export default function App() {
   }
 
   return (
-    <div style={{ display: 'flex', gap: '1rem' }}>
+    <div className="editor-container">
       <aside>
+        <h3>AI Recipes</h3>
         {recipes.map(r => (
           <button key={r.prompt} onClick={() => run(r.prompt)}>
             {r.label}
           </button>
         ))}
       </aside>
-      <div style={{ flex: 1 }}>
+      <div className="editor-wrapper">
+        <h3>Editor</h3>
         <EditorContent editor={editor} />
       </div>
       {diffState && (
-        <div>
-          <pre>{diffState.diff.map(part => part[1]).join('')}</pre>
+        <div className="diff-panel">
+          <h3>AI Suggestion</h3>
+          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {diffState.diff.map((part, i) => {
+              const [operation, text] = part
+              if (operation === 0) {
+                // Unchanged text
+                return <span key={i}>{text}</span>
+              } if (operation === -1) {
+                // Deleted text (original)
+                return (
+                  <span key={i} style={{ backgroundColor: '#ffcccc', textDecoration: 'line-through' }}>
+                    {text}
+                  </span>
+                )
+              } 
+                // Added text (new)
+                return (
+                  <span key={i} style={{ backgroundColor: '#ccffcc' }}>
+                    {text}
+                  </span>
+                )
+              
+            })}
+          </pre>
           <button onClick={diffState.accept}>Accept</button>
           <button onClick={diffState.reject}>Reject</button>
         </div>

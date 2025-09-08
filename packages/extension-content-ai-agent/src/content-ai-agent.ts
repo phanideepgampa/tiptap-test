@@ -1,7 +1,8 @@
 import { type Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import DiffMatchPatch, { type Diff } from 'diff-match-patch'
+import type { Diff } from 'diff-match-patch'
+import DiffMatchPatch from 'diff-match-patch'
 
 export interface ContentAiAgentOptions {
   runAgent: (options: { editor: Editor; text: string; from: number; to: number; prompt?: string }) => Promise<string>
@@ -25,6 +26,18 @@ interface PendingRequest {
   to: number
 }
 
+declare module '@tiptap/core' {
+  interface Commands<ReturnType> {
+    contentAiAgent: {
+      /**
+       * Run the Content AI agent on selected text
+       * @example editor.commands.runContentAiAgent({ prompt: 'uppercase' })
+       */
+      runContentAiAgent: (options?: { prompt?: string }) => ReturnType
+    }
+  }
+}
+
 const pluginKey = new PluginKey<{ pending: PendingRequest[] }>('content-ai-agent')
 
 export const ContentAiAgent = Extension.create<ContentAiAgentOptions>({
@@ -39,8 +52,8 @@ export const ContentAiAgent = Extension.create<ContentAiAgentOptions>({
   addCommands() {
     return {
       runContentAiAgent:
-        options =>
-        ({ editor }) => {
+        (options?: { prompt?: string }) =>
+        ({ editor }: { editor: Editor }) => {
           const { state, view } = editor
           const { from, to } = state.selection
           const text = state.doc.textBetween(from, to, ' ')
@@ -89,16 +102,16 @@ export const ContentAiAgent = Extension.create<ContentAiAgentOptions>({
         key: pluginKey,
         state: {
           init: () => ({ pending: [] }),
-          apply: (tr, value) => {
+          apply: (tr: any, value: any) => {
             let pending = value.pending
             const meta = tr.getMeta(pluginKey)
             if (meta?.type === 'add') {
               pending = [...pending, { id: meta.id, from: meta.from, to: meta.to }]
             } else if (meta?.type === 'remove') {
-              pending = pending.filter(p => p.id !== meta.id)
+              pending = pending.filter((p: any) => p.id !== meta.id)
             }
             if (tr.docChanged) {
-              pending = pending.map(p => ({
+              pending = pending.map((p: any) => ({
                 id: p.id,
                 from: tr.mapping.map(p.from),
                 to: tr.mapping.map(p.to),
@@ -108,13 +121,13 @@ export const ContentAiAgent = Extension.create<ContentAiAgentOptions>({
           },
         },
         props: {
-          decorations: state => {
+          decorations: (state: any) => {
             const pluginState = pluginKey.getState(state)
             if (!pluginState || pluginState.pending.length === 0) {
               return null
             }
             const decorations: Decoration[] = []
-            pluginState.pending.forEach(({ from, to }) => {
+            pluginState.pending.forEach(({ from, to }: { from: number; to: number }) => {
               decorations.push(Decoration.inline(from, to, { class: 'content-ai-agent-pending' }))
               decorations.push(
                 Decoration.widget(to, () => {

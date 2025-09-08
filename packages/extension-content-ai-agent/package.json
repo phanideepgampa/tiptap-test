@@ -3,7 +3,11 @@
   "description": "content ai agent extension for tiptap",
   "version": "0.0.0",
   "homepage": "https://tiptap.dev",
-  "keywords": ["tiptap", "tiptap extension", "ai"],
+  "keywords": [
+    "tiptap",
+    "tiptap extension",
+    "ai"
+  ],
   "license": "MIT",
   "funding": {
     "type": "github",
@@ -23,13 +27,19 @@
   "main": "dist/index.cjs",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["src", "dist"],
+  "files": [
+    "src",
+    "dist"
+  ],
   "devDependencies": {
     "@tiptap/core": "workspace:^",
+    "@tiptap/pm": "workspace:^",
+    "@types/diff-match-patch": "^1.0.36",
     "diff-match-patch": "^1.0.5"
   },
   "peerDependencies": {
-    "@tiptap/core": "workspace:^"
+    "@tiptap/core": "workspace:^",
+    "@tiptap/pm": "workspace:^"
   },
   "repository": {
     "type": "git",

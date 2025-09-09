@@ -27,6 +27,18 @@ Scope: Entire repository. This document defines how automated agents contribute 
 - Branch naming: `knit/<area>-<ticket|milestone>`.
 - Commits: Use Conventional Commits; add `Session: YYYYMMDD-<topic>` footer.
 
+## Backlog-Driven Autonomy
+
+- Canonical backlog lives in `tasks/backlog.yaml`.
+- Each task defines: `id`, `title`, `status`, `allowed_files[]`, `acceptance[]`, `validate[]`, `depends_on[]?`.
+- Tools SHOULD:
+  - Pick the first `status: pending` task (or as directed), update to `in_progress`.
+  - Only edit files matching `allowed_files`.
+  - Run the `validate` commands locally (build/tests). If not possible, outline exact commands for a human/CI to run.
+  - On success, set `status: done`, update session notes, and open a PR.
+  - On partial progress, leave `in_progress` and add notes to the session file.
+- A simple preview workflow exists: `.github/workflows/next-task.yml` to print the next pending task.
+
 ## Validation
 
 - Contract tests must pass for any change touching shared types or tool calls.
@@ -42,4 +54,3 @@ Scope: Entire repository. This document defines how automated agents contribute 
 - Build workspace: `pnpm -r build`
 - Test (when available): `pnpm -r test`
 - Collab harness: see `demos/collab-harness/README.md`
-

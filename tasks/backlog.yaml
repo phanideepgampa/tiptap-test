@@ -1,0 +1,60 @@
+# Backlog for Knit (LLM-friendly, machine-readable)
+
+meta:
+  product: Knit
+  version: 0.1
+  notes: |
+    Tasks should be small (1–3 files), with clear acceptance criteria
+    and validation commands. Tools should update status to "in_progress"
+    and then "done" only after validation passes.
+
+tasks:
+  - id: collab-bridge-skeleton
+    title: "Create collab-bridge extension skeleton (Hocuspocus/Yjs)"
+    status: pending
+    description: |
+      Add a new extension package providing connection + awareness plumbing
+      and a minimal command set: connect/disconnect/setPresence/updatePresence.
+    allowed_files:
+      - packages/extension-collab-bridge/**
+      - pnpm-workspace.yaml
+    acceptance:
+      - Package builds with tsup
+      - Exports connect/disconnect/setPresence/updatePresence commands types
+      - Minimal README with usage snippet
+    validate:
+      - pnpm -r build
+
+  - id: ai-edit-suggestions-basic
+    title: "AI edit suggestions: shared model + decorations"
+    status: pending
+    depends_on: [collab-bridge-skeleton]
+    description: |
+      Create an extension to hold shared suggestions (in-memory for now),
+      compute text diffs, and render decorations with accept/reject commands.
+    allowed_files:
+      - packages/extension-ai-edit-suggestions/**
+      - demos/content-ai-agent/**
+    acceptance:
+      - Commands: queueSuggestion, accept, reject, clear
+      - Diff rendering for replaced text (added/removed/unchanged)
+      - Demo wire-up calling queueSuggestion and accept/reject
+    validate:
+      - pnpm -r build
+
+  - id: rag-context-stub
+    title: "RAG context provider: client stub + interfaces"
+    status: pending
+    description: |
+      Add a stub extension exposing getContext/refreshContext and provider registry,
+      returning deterministic mock ContextPack using @tiptap-suite/contracts.
+    allowed_files:
+      - packages/extension-rag-context/**
+      - packages/contracts/**
+    acceptance:
+      - Methods: getContext({selection?}), setProviders(), refreshContext()
+      - Types imported from @tiptap-suite/contracts
+      - Unit-free build passes
+    validate:
+      - pnpm -r build
+

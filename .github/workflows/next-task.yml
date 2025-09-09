@@ -1,0 +1,30 @@
+name: Next Task Preview
+
+on:
+  workflow_dispatch:
+
+jobs:
+  next-task:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Show next pending task
+        run: |
+          bash scripts/next-task.sh tasks/backlog.yaml | tee next-task.out
+          echo "---"
+          cat next-task.out
+      - name: Export outputs
+        id: parse
+        run: |
+          while IFS='=' read -r k v; do
+            echo "$k=$v" >> $GITHUB_OUTPUT
+          done < next-task.out
+      - name: Summary
+        run: |
+          echo "### Next Task" >> $GITHUB_STEP_SUMMARY
+          echo "- id: ${{ steps.parse.outputs.id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- title: ${{ steps.parse.outputs.title }}" >> $GITHUB_STEP_SUMMARY
+          echo "- allowed_files: ${{ steps.parse.outputs.allowed_files }}" >> $GITHUB_STEP_SUMMARY
+          echo "- validate: ${{ steps.parse.outputs.validate }}" >> $GITHUB_STEP_SUMMARY
+

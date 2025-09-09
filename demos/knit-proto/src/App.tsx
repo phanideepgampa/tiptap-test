@@ -5,6 +5,9 @@ import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import type { Diff } from 'diff-match-patch'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Mark } from '@tiptap/core'
+import { chunkDocument, rankTopK, rankTopKEmbeddings, type RankedSource } from './rag'
+import { prewarmEmbeddings } from './embeddings'
 
 interface DiffState {
   diff: Diff[]
@@ -50,14 +53,61 @@ export default function App() {
   const [diffState, setDiffState] = useState<DiffState | null>(null)
   const [auto, setAuto] = useState(true)
   const [applyDoc, setApplyDoc] = useState(false)
+  const [useEmbeddings, setUseEmbeddings] = useState(false)
+  const [loadingEmb, setLoadingEmb] = useState(false)
+  const [embReady, setEmbReady] = useState(false)
+  const [embError, setEmbError] = useState<string | null>(null)
+
+  // Prewarm embeddings when toggled on
+  useEffect(() => {
+    let cancelled = false
+    if (useEmbeddings && !embReady) {
+      setLoadingEmb(true)
+      console.log('[App] Starting embeddings prewarm...')
+      prewarmEmbeddings()
+        .then(ok => { 
+          if (!cancelled) { 
+            console.log('[App] Embeddings prewarm result:', ok)
+            setEmbReady(ok)
+            if (!ok) setEmbError('Failed to load model')
+          }
+        })
+        .catch((e) => { 
+          if (!cancelled) {
+            console.error('[App] Embeddings prewarm error:', e)
+            setEmbError(e.message || String(e))
+          }
+        })
+        .finally(() => { if (!cancelled) setLoadingEmb(false) })
+    }
+    return () => { cancelled = true }
+  }, [useEmbeddings, embReady])
+
+  // Clear error once embeddings are ready
+  useEffect(() => {
+    if (embReady) setEmbError(null)
+  }, [embReady])
+
+  // (moved) Recompute context once embeddings become ready — see effect below editor init
   const [chatInput, setChatInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [sources, setSources] = useState<RankedSource[]>([])
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
   const idleTimer = useRef<number | null>(null)
   const lastRunOrigin = useRef<'auto' | 'recipe' | 'chat' | null>(null)
+
+  // Simple citations mark (local)
+  const CitationMark = useMemo(() => Mark.create({
+    name: 'citation',
+    addAttributes() { return { sources: { default: null } } },
+    parseHTML() { return [{ tag: 'span[data-citation]' }] },
+    renderHTML({ HTMLAttributes }) { return ['span', { 'data-citation': '1', style: 'background:rgba(0,128,255,.08)' }, 0] },
+  }), [])
 
   const editor = useEditor({
     extensions: [
       StarterKit,
+      CitationMark,
       ContentAiAgent.configure({
         runAgent: async ({ text, prompt }) => runStub({ text, prompt }),
         onDiffReady: payload => {
@@ -90,11 +140,20 @@ export default function App() {
             })
           }
         },
+        onSuccess: ({ editor, from, to }) => {
+          // Attach selected sources as citation marks to the inserted range
+          if (selectedSourceIds.length > 0) {
+            const selected = sources.filter(s => selectedSourceIds.includes(s.id)).map(s => ({ id: s.id, kind: s.kind, title: s.title, uri: s.uri }))
+            try {
+              editor.chain().setTextSelection({ from, to }).setMark('citation', { sources: JSON.stringify(selected) }).run()
+            } catch {}
+          }
+        },
       }),
     ],
     autofocus: 'end',
     content: '<p>Type here, select text, and run a recipe. Tab accepts, Esc rejects. Toggle auto-trigger to see suggestions as you type.</p>',
-    onUpdate: () => {
+    onUpdate: ({ editor }) => {
       if (!auto) return
       // Debounce auto trigger after typing
       if (idleTimer.current) window.clearTimeout(idleTimer.current)
@@ -102,14 +161,62 @@ export default function App() {
         const { state } = editor as any
         const { from, to } = state.selection
         const sel = state.doc.textBetween(from, to, ' ')
+        // Update RAG sources for the current selection
+        try {
+          const full = state.doc.textBetween(0, state.doc.content.size, '\n')
+          const chunks = chunkDocument(full)
+          const q = sel || full.slice(0, 400)
+          if (useEmbeddings && embReady) {
+            console.log('RAG: embeddings')
+            rankTopKEmbeddings(q, chunks, 5)
+              .then(ranked => {
+                setSources(ranked)
+                setSelectedSourceIds(ranked.slice(0, 3).map(s => s.id))
+              })
+              .catch(() => {
+                console.log('RAG: embeddings failed, fallback to tfidf')
+                const ranked = rankTopK(q, chunks, 5)
+                setSources(ranked)
+                setSelectedSourceIds(ranked.slice(0, 3).map(s => s.id))
+              })
+          } else {
+            console.log('RAG: tfidf')
+            const ranked = rankTopK(q, chunks, 5)
+            setSources(ranked)
+            setSelectedSourceIds(ranked.slice(0, 3).map(s => s.id))
+          }
+        } catch {}
         if (sel && sel.trim().length > 0) {
           setDiffState(null)
           lastRunOrigin.current = 'auto'
-          ;(editor as any).chain().focus().runContentAiAgent({ prompt: 'rewrite' }).run()
+          editor.chain().focus().runContentAiAgent({ prompt: 'rewrite' }).run()
         }
       }, 800)
     },
   })
+
+  // Recompute context once embeddings become ready
+  useEffect(() => {
+    if (!editor || !useEmbeddings || !embReady) return
+    try {
+      const state = (editor as any).state
+      const full = state.doc.textBetween(0, state.doc.content.size, '\n')
+      const { from, to } = state.selection
+      const sel = state.doc.textBetween(from, to, ' ')
+      const chunks = chunkDocument(full)
+      const q = sel || full.slice(0, 400)
+      rankTopKEmbeddings(q, chunks, 5)
+        .then(ranked => {
+          setSources(ranked)
+          setSelectedSourceIds(ranked.slice(0, 3).map((s: any) => s.id))
+        })
+        .catch(() => {
+          const ranked = rankTopK(q, chunks, 5)
+          setSources(ranked)
+          setSelectedSourceIds(ranked.slice(0, 3).map((s: any) => s.id))
+        })
+    } catch {}
+  }, [editor, useEmbeddings, embReady])
 
   // Hotkeys: Tab = accept, Esc = reject
   useEffect(() => {
@@ -184,8 +291,39 @@ export default function App() {
   return (
     <div className="workspace">
       <aside className="pane">
-        <h3>Context & Entities</h3>
-        <div style={{ padding: 12, color: '#666' }}>RAG panel (V1 local embeddings) will appear here.</div>
+        <h3>
+          Context
+          {useEmbeddings ? (
+            <span className={`badge ${loadingEmb ? 'loading' : embReady ? '' : 'muted'}`}>
+              {loadingEmb ? 'Embeddings loading…' : embReady ? 'Embeddings' : 'TF‑IDF'}
+            </span>
+          ) : null}
+        </h3>
+        {embError && useEmbeddings && !loadingEmb && !embReady && (
+          <div style={{ color: '#b00020', padding: '0 12px 8px 12px', fontSize: 12 }}>
+            Embeddings failed to load. Using TF‑IDF fallback. Check network access for model downloads.
+          </div>
+        )}
+        <div style={{ padding: 12 }}>
+          {sources.length === 0 && <div style={{ color: '#666' }}>No context yet. Select text or type to populate.</div>}
+          {sources.map(s => {
+            const preview = s.text.length > 140 ? s.text.slice(0, 140) + '…' : s.text
+            return (
+              <label key={s.id} className="row" style={{ alignItems: 'flex-start', marginBottom: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={selectedSourceIds.includes(s.id)}
+                  onChange={e => setSelectedSourceIds(prev => e.target.checked ? [...prev, s.id] : prev.filter(x => x !== s.id))}
+                />
+                <div>
+                  <div style={{ fontWeight: 600 }}>{s.title}</div>
+                  <div style={{ color: '#333', fontSize: 12, marginTop: 2 }}>{preview}</div>
+                  <div style={{ color: '#666', fontSize: 11, marginTop: 2 }}>score {s.score.toFixed(2)}{s.uri ? ` · ${s.uri}` : ''}</div>
+                </div>
+              </label>
+            )
+          })}
+        </div>
       </aside>
       <main className="pane" style={{ borderRight: 'none' }}>
         <div className="toolbar">
@@ -196,6 +334,10 @@ export default function App() {
           <label className="row">
             <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} />
             Auto-trigger
+          </label>
+          <label className="row">
+            <input type="checkbox" checked={useEmbeddings} onChange={e => setUseEmbeddings(e.target.checked)} />
+            Use embeddings (local)
           </label>
         </div>
         <div className="editor-shell">

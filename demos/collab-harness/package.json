@@ -1,0 +1,14 @@
+{
+  "name": "collab-harness-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "server": "node server.js",
+    "simulate": "node simulate.js"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^2.15.0",
+    "@hocuspocus/provider": "^2.15.0",
+    "yjs": "^13.6.0"
+  }
+}

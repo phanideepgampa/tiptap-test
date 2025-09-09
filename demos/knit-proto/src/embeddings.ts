@@ -8,17 +8,11 @@ async function getPipeline() {
     // Lazy load to avoid blocking first paint
     pipelinePromise = (async () => {
       const mod: any = await import('@huggingface/transformers')
-      // Configure for browser environment (local files – no proxy)
+      // Configure for browser environment
       try {
-        // Serve models from Vite public/ (no CORS)
         mod.env.allowRemoteModels = true
         mod.env.useBrowserCache = true
         mod.env.allowLocalModels = false
-        // Files will be served from demos/knit-proto/public/models (copied to dist on build)
-        // Use GitHub solution: localModelPath for local models
-        // mod.env.localModelPath =  '/models/';
-        // Don't use remoteURL for local models
-        // mod.env.remoteURL = new URL('/models/', window.location.origin).toString();
 
       } catch (e) {
         console.warn('[embeddings] config error:', e)

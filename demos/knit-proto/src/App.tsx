@@ -8,6 +8,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Mark } from '@tiptap/core'
 import { chunkDocument, rankTopK, rankTopKEmbeddings, type RankedSource } from './rag'
 import { prewarmEmbeddings } from './embeddings'
+import { runLLMTransform, llmAvailable } from './llm'
 
 interface DiffState {
   diff: Diff[]
@@ -26,6 +27,7 @@ interface ChatMessage {
   reject?: () => void
 }
 
+// Preset prompts used by the context menu
 const recipes = [
   { label: 'Rewrite', prompt: 'rewrite' },
   { label: 'Shorten', prompt: 'shorten' },
@@ -47,6 +49,20 @@ function runStub({ text, prompt }: { text: string; prompt?: string }): string {
   }
   // expand
   return `${text} ${text.length > 0 ? '…' : ''}`
+}
+
+function getInstruction(prompt: string): string {
+  const p = (prompt || '').trim().toLowerCase()
+  if (p === 'rewrite') {
+    return 'Rewrite the selected text to improve clarity, grammar, and flow while preserving original meaning and voice. Keep existing formatting, lists, and code blocks. Output only the revised text.'
+  }
+  if (p === 'shorten') {
+    return 'Shorten the selected text by about 25–35% while preserving key information, tone, and formatting. Keep bullet lists and structure. Output only the revised text.'
+  }
+  if (p === 'expand') {
+    return 'Expand the selected text with concise clarifications or concrete examples where helpful. Maintain the original voice and keep existing formatting. Avoid redundancy. Output only the revised text.'
+  }
+  return prompt
 }
 
 export default function App() {
@@ -93,8 +109,17 @@ export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [sources, setSources] = useState<RankedSource[]>([])
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
+  const sourcesRef = useRef<RankedSource[]>([])
+  const selectedSourceIdsRef = useRef<string[]>([])
+  useEffect(() => { sourcesRef.current = sources }, [sources])
+  useEffect(() => { selectedSourceIdsRef.current = selectedSourceIds }, [selectedSourceIds])
   const idleTimer = useRef<number | null>(null)
   const lastRunOrigin = useRef<'auto' | 'recipe' | 'chat' | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
+  const [inlinePrompt, setInlinePrompt] = useState('')
+  const [selectionPreview, setSelectionPreview] = useState<{ text: string; kind: 'selection' | 'document' | 'none' }>({ text: '', kind: 'none' })
+  const menuRef = useRef<HTMLDivElement | null>(null)
 
   // Simple citations mark (local)
   const CitationMark = useMemo(() => Mark.create({
@@ -109,8 +134,29 @@ export default function App() {
       StarterKit,
       CitationMark,
       ContentAiAgent.configure({
-        runAgent: async ({ text, prompt }) => runStub({ text, prompt }),
+        runAgent: async ({ text, prompt }) => {
+          // Prefer real LLM if configured; otherwise fall back to local stub
+          const p = prompt ?? 'rewrite'
+          console.log('[Agent] runAgent()', { prompt: p?.slice?.(0, 80), textLen: text.length, usingLLM: llmAvailable() })
+          if (llmAvailable()) {
+            try {
+              // Pass selected sources for context if any are checked
+              const currSources = sourcesRef.current
+              const currSel = selectedSourceIdsRef.current
+              const ctx = currSources.filter(s => currSel.includes(s.id))
+              return await runLLMTransform({
+                text,
+                instruction: p,
+                context: ctx.map(s => ({ title: s.title, text: s.text, uri: s.uri }))
+              })
+            } catch (e) {
+              console.warn('[LLM] Falling back to stub due to error:', e)
+            }
+          }
+          return runStub({ text, prompt: p })
+        },
         onDiffReady: payload => {
+          console.log('[Agent] onDiffReady', { ops: payload.diff.length })
           setDiffState(payload)
           // If this diff came from chat, mirror it into the chat stream
           if (lastRunOrigin.current === 'chat') {
@@ -141,6 +187,7 @@ export default function App() {
           }
         },
         onSuccess: ({ editor, from, to }) => {
+          console.log('[Agent] onSuccess', { from, to, citations: selectedSourceIds.length })
           // Attach selected sources as citation marks to the inserted range
           if (selectedSourceIds.length > 0) {
             const selected = sources.filter(s => selectedSourceIds.includes(s.id)).map(s => ({ id: s.id, kind: s.kind, title: s.title, uri: s.uri }))
@@ -154,6 +201,18 @@ export default function App() {
     autofocus: 'end',
     content: '<p>Type here, select text, and run a recipe. Tab accepts, Esc rejects. Toggle auto-trigger to see suggestions as you type.</p>',
     onUpdate: ({ editor }) => {
+      // Keep chat selection preview in sync on content changes
+      try {
+        const state = (editor as any).state
+        if (applyDoc) {
+          const full = state.doc.textBetween(0, state.doc.content.size, '\n')
+          setSelectionPreview({ text: full, kind: 'document' })
+        } else {
+          const { from, to } = state.selection
+          const sel = state.doc.textBetween(from, to, ' ')
+          setSelectionPreview(sel ? { text: sel, kind: 'selection' } : { text: '', kind: 'none' })
+        }
+      } catch {}
       if (!auto) return
       // Debounce auto trigger after typing
       if (idleTimer.current) window.clearTimeout(idleTimer.current)
@@ -189,11 +248,38 @@ export default function App() {
         if (sel && sel.trim().length > 0) {
           setDiffState(null)
           lastRunOrigin.current = 'auto'
-          editor.chain().focus().runContentAiAgent({ prompt: 'rewrite' }).run()
+          const instruction = getInstruction('rewrite')
+          console.log('[Auto] trigger run', { from, to, selLen: sel.length })
+          editor.chain().focus().runContentAiAgent({ prompt: instruction }).run()
         }
       }, 800)
     },
   })
+
+  // Track selection changes for chat preview
+  useEffect(() => {
+    if (!editor) return
+    const update = () => {
+      try {
+        const state = (editor as any).state
+        if (applyDoc) {
+          const full = state.doc.textBetween(0, state.doc.content.size, '\n')
+          setSelectionPreview({ text: full, kind: 'document' })
+        } else {
+          const { from, to } = state.selection
+          const sel = state.doc.textBetween(from, to, ' ')
+          setSelectionPreview(sel ? { text: sel, kind: 'selection' } : { text: '', kind: 'none' })
+        }
+      } catch {}
+    }
+    update()
+    editor.on('selectionUpdate', update)
+    editor.on('update', update)
+    return () => {
+      editor.off('selectionUpdate', update)
+      editor.off('update', update)
+    }
+  }, [editor, applyDoc])
 
   // Recompute context once embeddings become ready
   useEffect(() => {
@@ -221,6 +307,7 @@ export default function App() {
   // Hotkeys: Tab = accept, Esc = reject
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (menuOpen && e.key === 'Escape') { setMenuOpen(false); return }
       if (!diffState) return
       if (e.key === 'Tab') {
         e.preventDefault()
@@ -234,26 +321,38 @@ export default function App() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [diffState])
+  }, [diffState, menuOpen])
+
+  // Close context menu on outside click (but keep clicks inside menu)
+  useEffect(() => {
+    if (!menuOpen) return
+    const handler = (e: MouseEvent) => {
+      const el = menuRef.current
+      if (el && e.target instanceof Node && el.contains(e.target)) return
+      setMenuOpen(false)
+    }
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [menuOpen])
 
   const run = (prompt: string) => {
     setDiffState(null)
     lastRunOrigin.current = 'recipe'
-    editor?.chain().focus().runContentAiAgent({ prompt }).run()
-  }
-
-  const parsePrompt = (text: string): string => {
-    const t = text.toLowerCase()
-    if (t.includes('shorten')) return 'shorten'
-    if (t.includes('expand')) return 'expand'
-    return 'rewrite'
+    const instruction = getInstruction(prompt)
+    const state = (editor as any)?.state
+    try {
+      const { from, to } = state.selection
+      const sel = state.doc.textBetween(from, to, ' ')
+      console.log('[UI] run()', { prompt, instruction: instruction.slice(0, 80), from, to, selLen: sel?.length })
+    } catch {}
+    editor?.chain().focus().runContentAiAgent({ prompt: instruction }).run()
   }
 
   const sendChat = () => {
     if (!chatInput.trim()) return
     // Push user message
     setMessages(curr => [...curr, { id: `u-${Date.now()}`, role: 'user', content: chatInput }])
-    const prompt = parsePrompt(chatInput)
+    const prompt = chatInput.trim()
     setChatInput('')
     // Select doc if requested
     if (applyDoc && editor) {
@@ -327,9 +426,7 @@ export default function App() {
       </aside>
       <main className="pane" style={{ borderRight: 'none' }}>
         <div className="toolbar">
-          {recipes.map(r => (
-            <button key={r.prompt} onClick={() => run(r.prompt)}>{r.label}</button>
-          ))}
+          <span style={{ color: '#666', fontSize: 12 }}>Select text to use the Refactor menu.</span>
           <span className="spacer" />
           <label className="row">
             <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} />
@@ -340,8 +437,50 @@ export default function App() {
             Use embeddings (local)
           </label>
         </div>
-        <div className="editor-shell">
+        <div className="editor-shell"
+          onContextMenu={e => {
+            if (!editor) return
+            const sel = (editor as any).state.selection
+            if (!sel || sel.empty) return
+            e.preventDefault()
+            setMenuPos({ x: e.clientX, y: e.clientY })
+            setInlinePrompt('')
+            setMenuOpen(true)
+            try {
+              const { from, to } = (editor as any).state.selection
+              const text = (editor as any).state.doc.textBetween(from, to, ' ')
+              console.log('[UI] contextmenu open', { x: e.clientX, y: e.clientY, from, to, selLen: text.length })
+            } catch {}
+          }}
+        >
           <EditorContent editor={editor} />
+
+          {menuOpen && (
+            <div ref={menuRef} className="context-menu" style={{ position: 'fixed', left: menuPos.x, top: menuPos.y, zIndex: 1000 }}>
+              <div className="menu-item"><button onClick={() => { console.log('[UI] menu click: rewrite'); setMenuOpen(false); run('rewrite') }}>Rewrite</button></div>
+              <div className="menu-item"><button onClick={() => { console.log('[UI] menu click: shorten'); setMenuOpen(false); run('shorten') }}>Shorten</button></div>
+              <div className="menu-item"><button onClick={() => { console.log('[UI] menu click: expand'); setMenuOpen(false); run('expand') }}>Expand</button></div>
+              <div className="menu-sep" />
+              <div className="menu-inline">
+                <input
+                  placeholder="Prompt…"
+                  value={inlinePrompt}
+                  onChange={e => setInlinePrompt(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const p = inlinePrompt.trim()
+                      if (p) { console.log('[UI] menu inline prompt run', p); setMenuOpen(false); setInlinePrompt(''); run(p) }
+                    } else if (e.key === 'Escape') {
+                      setMenuOpen(false)
+                      setInlinePrompt('')
+                    }
+                  }}
+                />
+                <button onClick={() => { const p = inlinePrompt.trim(); if (p) { console.log('[UI] menu inline prompt run', p); setMenuOpen(false); setInlinePrompt(''); run(p) } }}>Run</button>
+              </div>
+              <div style={{ fontSize: 10, padding: '6px 8px' }}>{llmAvailable() ? 'LLM' : 'Stub'}</div>
+            </div>
+          )}
           {diffPreview}
           {diffState && <div className="bubble">Tab = Accept, Esc = Reject</div>}
         </div>
@@ -349,6 +488,20 @@ export default function App() {
       <section className="pane right">
         <h3>Chat</h3>
         <div className="chat">
+          <div className="selection-preview">
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>
+              {selectionPreview.kind === 'document' ? 'Document' : selectionPreview.kind === 'selection' ? 'Selection' : 'Selection'}
+              {selectionPreview.text ? ` (${selectionPreview.text.length} chars)` : ''}
+            </div>
+            {selectionPreview.text ? (
+              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
+                {selectionPreview.text.length > 600 ? selectionPreview.text.slice(0, 600) + '…' : selectionPreview.text}
+              </pre>
+            ) : (
+              <div style={{ color: '#666' }}>No selection. Toggle “Apply to whole document” or select text.</div>
+            )}
+          </div>
+
           {messages.map(m => (
             <div key={m.id} className="msg">
               <div style={{ fontWeight: 600, marginBottom: 4 }}>{m.role === 'user' ? 'You' : 'AI'}</div>

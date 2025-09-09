@@ -20,8 +20,19 @@ button:hover { background:#f0f0f0 }
 .diff-panel { border-top: 1px solid #eee; padding:8px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; }
 .chat { padding: 8px; }
 .chat .msg { border:1px solid #eee; border-radius:8px; padding:8px; margin:8px 0; background:#fff }
+.chat .selection-preview { border:1px solid #eee; border-radius:8px; padding:8px; margin:8px 0; background:#fff }
 .row { display:flex; align-items:center; gap:8px }
 .spacer { flex:1 }
 .badge { display:inline-block; margin-left:8px; padding:2px 6px; border-radius:10px; font-size:11px; font-weight:600; color:#fff; background:#0d6efd }
 .badge.muted { background:#6c757d }
 .badge.loading { background:#6f42c1 }
+
+/* Context menu */
+/* Minimal context menu (no colors beyond defaults) */
+.context-menu { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 6px; min-width: 180px; }
+.context-menu .menu-item { padding: 2px 0; }
+.context-menu .menu-item button { width: 100%; text-align: left; background: #fff; border: 1px solid #ddd; border-radius: 4px; padding: 6px; }
+.context-menu .menu-item button:hover { background: #f5f5f5; }
+.context-menu .menu-sep { height: 1px; background: #e5e5e5; margin: 6px 0; }
+.context-menu .menu-inline { display: flex; gap: 6px; align-items: center; }
+.context-menu .menu-inline input { flex: 1; border: 1px solid #ccc; border-radius: 4px; padding: 6px; }

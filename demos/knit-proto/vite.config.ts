@@ -10,16 +10,6 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: [
-      '@tiptap/core',
-      '@tiptap/react',
-      '@tiptap/starter-kit',
-      '@tiptap/extension-content-ai-agent',
-      '@tiptap/pm/state',
-      '@tiptap/pm/view',
-      '@tiptap/pm/model',
-      'diff-match-patch',
-    ],
     esbuildOptions: {
       define: {
         global: 'globalThis',
@@ -31,4 +21,3 @@ export default defineConfig({
     global: 'globalThis',
   },
 })
-

@@ -9,6 +9,12 @@ import { Mark } from '@tiptap/core'
 import { chunkDocument, rankTopK, rankTopKEmbeddings, type RankedSource } from './rag'
 import { prewarmEmbeddings } from './embeddings'
 import { runLLMTransform, llmAvailable } from './llm'
+import DiffPreview from './components/DiffPreview'
+import ContextMenu from './components/ContextMenu'
+import RagSidebar from './components/RagSidebar'
+import useSelectionPreview from './hooks/useSelectionPreview'
+import useSuggestionHotkeys from './hooks/useSuggestionHotkeys'
+import ChatPanel from './components/ChatPanel'
 
 interface DiffState {
   diff: Diff[]
@@ -118,8 +124,6 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const [inlinePrompt, setInlinePrompt] = useState('')
-  const [selectionPreview, setSelectionPreview] = useState<{ text: string; kind: 'selection' | 'document' | 'none' }>({ text: '', kind: 'none' })
-  const menuRef = useRef<HTMLDivElement | null>(null)
 
   // Simple citations mark (local)
   const CitationMark = useMemo(() => Mark.create({
@@ -201,18 +205,6 @@ export default function App() {
     autofocus: 'end',
     content: '<p>Type here, select text, and run a recipe. Tab accepts, Esc rejects. Toggle auto-trigger to see suggestions as you type.</p>',
     onUpdate: ({ editor }) => {
-      // Keep chat selection preview in sync on content changes
-      try {
-        const state = (editor as any).state
-        if (applyDoc) {
-          const full = state.doc.textBetween(0, state.doc.content.size, '\n')
-          setSelectionPreview({ text: full, kind: 'document' })
-        } else {
-          const { from, to } = state.selection
-          const sel = state.doc.textBetween(from, to, ' ')
-          setSelectionPreview(sel ? { text: sel, kind: 'selection' } : { text: '', kind: 'none' })
-        }
-      } catch {}
       if (!auto) return
       // Debounce auto trigger after typing
       if (idleTimer.current) window.clearTimeout(idleTimer.current)
@@ -256,30 +248,8 @@ export default function App() {
     },
   })
 
-  // Track selection changes for chat preview
-  useEffect(() => {
-    if (!editor) return
-    const update = () => {
-      try {
-        const state = (editor as any).state
-        if (applyDoc) {
-          const full = state.doc.textBetween(0, state.doc.content.size, '\n')
-          setSelectionPreview({ text: full, kind: 'document' })
-        } else {
-          const { from, to } = state.selection
-          const sel = state.doc.textBetween(from, to, ' ')
-          setSelectionPreview(sel ? { text: sel, kind: 'selection' } : { text: '', kind: 'none' })
-        }
-      } catch {}
-    }
-    update()
-    editor.on('selectionUpdate', update)
-    editor.on('update', update)
-    return () => {
-      editor.off('selectionUpdate', update)
-      editor.off('update', update)
-    }
-  }, [editor, applyDoc])
+  // Selection preview
+  const selectionPreview = useSelectionPreview((editor as any) || null, applyDoc)
 
   // Recompute context once embeddings become ready
   useEffect(() => {
@@ -304,36 +274,12 @@ export default function App() {
     } catch {}
   }, [editor, useEmbeddings, embReady])
 
-  // Hotkeys: Tab = accept, Esc = reject
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (menuOpen && e.key === 'Escape') { setMenuOpen(false); return }
-      if (!diffState) return
-      if (e.key === 'Tab') {
-        e.preventDefault()
-        diffState.accept()
-        setDiffState(null)
-      } else if (e.key === 'Escape') {
-        e.preventDefault()
-        diffState.reject()
-        setDiffState(null)
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [diffState, menuOpen])
-
-  // Close context menu on outside click (but keep clicks inside menu)
-  useEffect(() => {
-    if (!menuOpen) return
-    const handler = (e: MouseEvent) => {
-      const el = menuRef.current
-      if (el && e.target instanceof Node && el.contains(e.target)) return
-      setMenuOpen(false)
-    }
-    window.addEventListener('mousedown', handler)
-    return () => window.removeEventListener('mousedown', handler)
-  }, [menuOpen])
+  // Hotkeys: Tab = accept, Esc = reject / close menu
+  useSuggestionHotkeys({
+    diffState,
+    menuOpen,
+    onCloseMenu: () => setMenuOpen(false),
+  })
 
   const run = (prompt: string) => {
     setDiffState(null)
@@ -369,61 +315,23 @@ export default function App() {
     editor?.chain().focus().runContentAiAgent({ prompt }).run()
   }
 
-  const diffPreview = useMemo(() => {
-    if (!diffState) return null
-    return (
-      <pre className="diff-panel" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-        {diffState.diff.map((part, i) => {
-          const [operation, text] = part
-          if (operation === 0) return <span key={i}>{text}</span>
-          if (operation === -1) return (
-            <span key={i} style={{ backgroundColor: '#ffcccc', textDecoration: 'line-through' }}>{text}</span>
-          )
-          return (
-            <span key={i} style={{ backgroundColor: '#ccffcc' }}>{text}</span>
-          )
-        })}
-      </pre>
-    )
-  }, [diffState])
+  const selectionLabel = selectionPreview.kind === 'document'
+    ? 'Document'
+    : selectionPreview.kind === 'selection'
+    ? 'Selection'
+    : 'Selection'
 
   return (
     <div className="workspace">
-      <aside className="pane">
-        <h3>
-          Context
-          {useEmbeddings ? (
-            <span className={`badge ${loadingEmb ? 'loading' : embReady ? '' : 'muted'}`}>
-              {loadingEmb ? 'Embeddings loading…' : embReady ? 'Embeddings' : 'TF‑IDF'}
-            </span>
-          ) : null}
-        </h3>
-        {embError && useEmbeddings && !loadingEmb && !embReady && (
-          <div style={{ color: '#b00020', padding: '0 12px 8px 12px', fontSize: 12 }}>
-            Embeddings failed to load. Using TF‑IDF fallback. Check network access for model downloads.
-          </div>
-        )}
-        <div style={{ padding: 12 }}>
-          {sources.length === 0 && <div style={{ color: '#666' }}>No context yet. Select text or type to populate.</div>}
-          {sources.map(s => {
-            const preview = s.text.length > 140 ? s.text.slice(0, 140) + '…' : s.text
-            return (
-              <label key={s.id} className="row" style={{ alignItems: 'flex-start', marginBottom: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={selectedSourceIds.includes(s.id)}
-                  onChange={e => setSelectedSourceIds(prev => e.target.checked ? [...prev, s.id] : prev.filter(x => x !== s.id))}
-                />
-                <div>
-                  <div style={{ fontWeight: 600 }}>{s.title}</div>
-                  <div style={{ color: '#333', fontSize: 12, marginTop: 2 }}>{preview}</div>
-                  <div style={{ color: '#666', fontSize: 11, marginTop: 2 }}>score {s.score.toFixed(2)}{s.uri ? ` · ${s.uri}` : ''}</div>
-                </div>
-              </label>
-            )
-          })}
-        </div>
-      </aside>
+      <RagSidebar
+        useEmbeddings={useEmbeddings}
+        loadingEmb={loadingEmb}
+        embReady={embReady}
+        embError={embError}
+        sources={sources as any}
+        selectedSourceIds={selectedSourceIds}
+        onToggleSource={(id, checked) => setSelectedSourceIds(prev => checked ? [...prev, id] : prev.filter(x => x !== id))}
+      />
       <main className="pane" style={{ borderRight: 'none' }}>
         <div className="toolbar">
           <span style={{ color: '#666', fontSize: 12 }}>Select text to use the Refactor menu.</span>
@@ -455,91 +363,32 @@ export default function App() {
         >
           <EditorContent editor={editor} />
 
-          {menuOpen && (
-            <div ref={menuRef} className="context-menu" style={{ position: 'fixed', left: menuPos.x, top: menuPos.y, zIndex: 1000 }}>
-              <div className="menu-item"><button onClick={() => { console.log('[UI] menu click: rewrite'); setMenuOpen(false); run('rewrite') }}>Rewrite</button></div>
-              <div className="menu-item"><button onClick={() => { console.log('[UI] menu click: shorten'); setMenuOpen(false); run('shorten') }}>Shorten</button></div>
-              <div className="menu-item"><button onClick={() => { console.log('[UI] menu click: expand'); setMenuOpen(false); run('expand') }}>Expand</button></div>
-              <div className="menu-sep" />
-              <div className="menu-inline">
-                <input
-                  placeholder="Prompt…"
-                  value={inlinePrompt}
-                  onChange={e => setInlinePrompt(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      const p = inlinePrompt.trim()
-                      if (p) { console.log('[UI] menu inline prompt run', p); setMenuOpen(false); setInlinePrompt(''); run(p) }
-                    } else if (e.key === 'Escape') {
-                      setMenuOpen(false)
-                      setInlinePrompt('')
-                    }
-                  }}
-                />
-                <button onClick={() => { const p = inlinePrompt.trim(); if (p) { console.log('[UI] menu inline prompt run', p); setMenuOpen(false); setInlinePrompt(''); run(p) } }}>Run</button>
-              </div>
-              <div style={{ fontSize: 10, padding: '6px 8px' }}>{llmAvailable() ? 'LLM' : 'Stub'}</div>
-            </div>
-          )}
-          {diffPreview}
+          <ContextMenu
+            open={menuOpen}
+            x={menuPos.x}
+            y={menuPos.y}
+            modeBadge={llmAvailable() ? 'LLM' : 'Stub'}
+            onClose={() => setMenuOpen(false)}
+            onRewrite={() => { console.log('[UI] menu click: rewrite'); setMenuOpen(false); run('rewrite') }}
+            onShorten={() => { console.log('[UI] menu click: shorten'); setMenuOpen(false); run('shorten') }}
+            onExpand={() => { console.log('[UI] menu click: expand'); setMenuOpen(false); run('expand') }}
+            onRunPrompt={(p) => { console.log('[UI] menu inline prompt run', p); setMenuOpen(false); run(p) }}
+          />
+          {diffState ? <DiffPreview diff={diffState.diff} /> : null}
           {diffState && <div className="bubble">Tab = Accept, Esc = Reject</div>}
         </div>
       </main>
       <section className="pane right">
         <h3>Chat</h3>
-        <div className="chat">
-          <div className="selection-preview">
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>
-              {selectionPreview.kind === 'document' ? 'Document' : selectionPreview.kind === 'selection' ? 'Selection' : 'Selection'}
-              {selectionPreview.text ? ` (${selectionPreview.text.length} chars)` : ''}
-            </div>
-            {selectionPreview.text ? (
-              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
-                {selectionPreview.text.length > 600 ? selectionPreview.text.slice(0, 600) + '…' : selectionPreview.text}
-              </pre>
-            ) : (
-              <div style={{ color: '#666' }}>No selection. Toggle “Apply to whole document” or select text.</div>
-            )}
-          </div>
-
-          {messages.map(m => (
-            <div key={m.id} className="msg">
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{m.role === 'user' ? 'You' : 'AI'}</div>
-              {m.content && <div style={{ marginBottom: 6 }}>{m.content}</div>}
-              {m.role === 'ai' && m.diff && (
-                <div style={{ marginTop: 4 }}>
-                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                    {m.diff.map((part, i) => {
-                      const [op, t] = part
-                      if (op === 0) return <span key={i}>{t}</span>
-                      if (op === -1) return <span key={i} style={{ backgroundColor: '#ffcccc', textDecoration: 'line-through' }}>{t}</span>
-                      return <span key={i} style={{ backgroundColor: '#ccffcc' }}>{t}</span>
-                    })}
-                  </pre>
-                  <div className="row">
-                    <button onClick={m.accept}>Accept</button>
-                    <button onClick={m.reject}>Reject</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-
-          <div className="row" style={{ marginTop: 8 }}>
-            <input
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              style={{ flex: 1, padding: 8, border: '1px solid #ccc', borderRadius: 6 }}
-              placeholder="Ask AI … (e.g., ‘shorten this’)"
-              onKeyDown={e => { if (e.key === 'Enter') sendChat() }}
-            />
-            <button onClick={sendChat}>Send</button>
-          </div>
-          <label className="row" style={{ marginTop: 6 }}>
-            <input type="checkbox" checked={applyDoc} onChange={e => setApplyDoc(e.target.checked)} />
-            Apply to whole document
-          </label>
-        </div>
+        <ChatPanel
+          messages={messages as any}
+          selectionPreview={selectionPreview}
+          chatInput={chatInput}
+          onChangeChatInput={setChatInput}
+          onSend={sendChat}
+          applyDoc={applyDoc}
+          onToggleApplyDoc={setApplyDoc}
+        />
       </section>
     </div>
   )

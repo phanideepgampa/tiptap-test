@@ -6,7 +6,7 @@ import StarterKit from '@tiptap/starter-kit'
 import type { Diff } from 'diff-match-patch'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Mark } from '@tiptap/core'
-import { chunkDocument, rankTopK, rankTopKEmbeddings, type RankedSource } from './rag'
+import type { RankedSource } from './rag'
 import { prewarmEmbeddings } from './embeddings'
 import { runLLMTransform, llmAvailable } from './llm'
 import DiffPreview from './components/DiffPreview'
@@ -15,6 +15,8 @@ import RagSidebar from './components/RagSidebar'
 import useSelectionPreview from './hooks/useSelectionPreview'
 import useSuggestionHotkeys from './hooks/useSuggestionHotkeys'
 import ChatPanel from './components/ChatPanel'
+import useAgent from './hooks/useAgent'
+import useRagContext from './hooks/useRagContext'
 
 interface DiffState {
   diff: Diff[]
@@ -113,12 +115,9 @@ export default function App() {
   // (moved) Recompute context once embeddings become ready — see effect below editor init
   const [chatInput, setChatInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [sources, setSources] = useState<RankedSource[]>([])
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
-  const sourcesRef = useRef<RankedSource[]>([])
-  const selectedSourceIdsRef = useRef<string[]>([])
-  useEffect(() => { sourcesRef.current = sources }, [sources])
-  useEffect(() => { selectedSourceIdsRef.current = selectedSourceIds }, [selectedSourceIds])
+  const rag = useRagContext({ useEmbeddings, embReady })
+  const sources = rag.sources
+  const selectedSourceIds = rag.selectedSourceIds
   const idleTimer = useRef<number | null>(null)
   const lastRunOrigin = useRef<'auto' | 'recipe' | 'chat' | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -133,74 +132,54 @@ export default function App() {
     renderHTML({ HTMLAttributes }) { return ['span', { 'data-citation': '1', style: 'background:rgba(0,128,255,.08)' }, 0] },
   }), [])
 
+  const agentExt = useAgent({
+    getContext: () => {
+      const currSources = rag.sourcesRef.current
+      const currSel = rag.selectedSourceIdsRef.current
+      return currSources.filter(s => currSel.includes(s.id)).map(s => ({ title: s.title, text: s.text, uri: s.uri }))
+    },
+    onDiffReady: payload => {
+      setDiffState(payload)
+      if (lastRunOrigin.current === 'chat') {
+        setMessages(curr => {
+          const next = [...curr]
+          const idx = next.findIndex(m => m.role === 'ai' && !m.diff)
+          const aiMsg: ChatMessage = {
+            id: `ai-${Date.now()}`,
+            role: 'ai',
+            diff: payload.diff,
+            accept: () => {
+              payload.accept()
+              setDiffState(null)
+              setMessages(ms => ms.map(x => x === next[idx] ? { ...x, content: 'Accepted' } : x))
+            },
+            reject: () => {
+              payload.reject()
+              setDiffState(null)
+              setMessages(ms => ms.map(x => x === next[idx] ? { ...x, content: 'Rejected' } : x))
+            },
+          }
+          if (idx >= 0) next.splice(idx, 1, aiMsg)
+          else next.push(aiMsg)
+          return next
+        })
+      }
+    },
+    onSuccess: ({ editor, from, to }) => {
+      if (selectedSourceIds.length > 0) {
+        const selected = sources.filter(s => selectedSourceIds.includes(s.id)).map(s => ({ id: s.id, kind: s.kind, title: s.title, uri: s.uri }))
+        try {
+          editor.chain().setTextSelection({ from, to }).setMark('citation', { sources: JSON.stringify(selected) }).run()
+        } catch {}
+      }
+    },
+  })
+
   const editor = useEditor({
     extensions: [
       StarterKit,
       CitationMark,
-      ContentAiAgent.configure({
-        runAgent: async ({ text, prompt }) => {
-          // Prefer real LLM if configured; otherwise fall back to local stub
-          const p = prompt ?? 'rewrite'
-          console.log('[Agent] runAgent()', { prompt: p?.slice?.(0, 80), textLen: text.length, usingLLM: llmAvailable() })
-          if (llmAvailable()) {
-            try {
-              // Pass selected sources for context if any are checked
-              const currSources = sourcesRef.current
-              const currSel = selectedSourceIdsRef.current
-              const ctx = currSources.filter(s => currSel.includes(s.id))
-              return await runLLMTransform({
-                text,
-                instruction: p,
-                context: ctx.map(s => ({ title: s.title, text: s.text, uri: s.uri }))
-              })
-            } catch (e) {
-              console.warn('[LLM] Falling back to stub due to error:', e)
-            }
-          }
-          return runStub({ text, prompt: p })
-        },
-        onDiffReady: payload => {
-          console.log('[Agent] onDiffReady', { ops: payload.diff.length })
-          setDiffState(payload)
-          // If this diff came from chat, mirror it into the chat stream
-          if (lastRunOrigin.current === 'chat') {
-            setMessages(curr => {
-              // Replace last pending AI message (if any) with the suggestion
-              const next = [...curr]
-              const idx = next.findIndex(m => m.role === 'ai' && !m.diff)
-              const aiMsg: ChatMessage = {
-                id: `ai-${Date.now()}`,
-                role: 'ai',
-                diff: payload.diff,
-                accept: () => {
-                  payload.accept()
-                  setDiffState(null)
-                  // Mark as accepted (optional: remove)
-                  setMessages(ms => ms.map(x => x === next[idx] ? { ...x, content: 'Accepted' } : x))
-                },
-                reject: () => {
-                  payload.reject()
-                  setDiffState(null)
-                  setMessages(ms => ms.map(x => x === next[idx] ? { ...x, content: 'Rejected' } : x))
-                },
-              }
-              if (idx >= 0) next.splice(idx, 1, aiMsg)
-              else next.push(aiMsg)
-              return next
-            })
-          }
-        },
-        onSuccess: ({ editor, from, to }) => {
-          console.log('[Agent] onSuccess', { from, to, citations: selectedSourceIds.length })
-          // Attach selected sources as citation marks to the inserted range
-          if (selectedSourceIds.length > 0) {
-            const selected = sources.filter(s => selectedSourceIds.includes(s.id)).map(s => ({ id: s.id, kind: s.kind, title: s.title, uri: s.uri }))
-            try {
-              editor.chain().setTextSelection({ from, to }).setMark('citation', { sources: JSON.stringify(selected) }).run()
-            } catch {}
-          }
-        },
-      }),
+      agentExt,
     ],
     autofocus: 'end',
     content: '<p>Type here, select text, and run a recipe. Tab accepts, Esc rejects. Toggle auto-trigger to see suggestions as you type.</p>',
@@ -215,27 +194,8 @@ export default function App() {
         // Update RAG sources for the current selection
         try {
           const full = state.doc.textBetween(0, state.doc.content.size, '\n')
-          const chunks = chunkDocument(full)
           const q = sel || full.slice(0, 400)
-          if (useEmbeddings && embReady) {
-            console.log('RAG: embeddings')
-            rankTopKEmbeddings(q, chunks, 5)
-              .then(ranked => {
-                setSources(ranked)
-                setSelectedSourceIds(ranked.slice(0, 3).map(s => s.id))
-              })
-              .catch(() => {
-                console.log('RAG: embeddings failed, fallback to tfidf')
-                const ranked = rankTopK(q, chunks, 5)
-                setSources(ranked)
-                setSelectedSourceIds(ranked.slice(0, 3).map(s => s.id))
-              })
-          } else {
-            console.log('RAG: tfidf')
-            const ranked = rankTopK(q, chunks, 5)
-            setSources(ranked)
-            setSelectedSourceIds(ranked.slice(0, 3).map(s => s.id))
-          }
+          rag.refresh(full, q)
         } catch {}
         if (sel && sel.trim().length > 0) {
           setDiffState(null)
@@ -259,18 +219,8 @@ export default function App() {
       const full = state.doc.textBetween(0, state.doc.content.size, '\n')
       const { from, to } = state.selection
       const sel = state.doc.textBetween(from, to, ' ')
-      const chunks = chunkDocument(full)
       const q = sel || full.slice(0, 400)
-      rankTopKEmbeddings(q, chunks, 5)
-        .then(ranked => {
-          setSources(ranked)
-          setSelectedSourceIds(ranked.slice(0, 3).map((s: any) => s.id))
-        })
-        .catch(() => {
-          const ranked = rankTopK(q, chunks, 5)
-          setSources(ranked)
-          setSelectedSourceIds(ranked.slice(0, 3).map((s: any) => s.id))
-        })
+      rag.refresh(full, q)
     } catch {}
   }, [editor, useEmbeddings, embReady])
 
@@ -279,6 +229,7 @@ export default function App() {
     diffState,
     menuOpen,
     onCloseMenu: () => setMenuOpen(false),
+    onClearSuggestion: () => setDiffState(null),
   })
 
   const run = (prompt: string) => {
@@ -330,7 +281,7 @@ export default function App() {
         embError={embError}
         sources={sources as any}
         selectedSourceIds={selectedSourceIds}
-        onToggleSource={(id, checked) => setSelectedSourceIds(prev => checked ? [...prev, id] : prev.filter(x => x !== id))}
+        onToggleSource={(id, checked) => rag.setSelectedSourceIds(prev => checked ? [...prev, id] : prev.filter(x => x !== id))}
       />
       <main className="pane" style={{ borderRight: 'none' }}>
         <div className="toolbar">

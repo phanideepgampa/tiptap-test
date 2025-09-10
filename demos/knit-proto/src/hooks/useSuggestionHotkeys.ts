@@ -9,8 +9,9 @@ export function useSuggestionHotkeys(options: {
   diffState: DiffStateLike | null
   menuOpen: boolean
   onCloseMenu: () => void
+  onClearSuggestion: () => void
 }) {
-  const { diffState, menuOpen, onCloseMenu } = options
+  const { diffState, menuOpen, onCloseMenu, onClearSuggestion } = options
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -19,15 +20,16 @@ export function useSuggestionHotkeys(options: {
       if (e.key === 'Tab') {
         e.preventDefault()
         diffState.accept()
+        onClearSuggestion()
       } else if (e.key === 'Escape') {
         e.preventDefault()
         diffState.reject()
+        onClearSuggestion()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [diffState, menuOpen, onCloseMenu])
+  }, [diffState, menuOpen, onCloseMenu, onClearSuggestion])
 }
 
 export default useSuggestionHotkeys
-

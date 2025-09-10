@@ -9,17 +9,23 @@ export default defineConfig({
     alias: [
       {
         find: '@tiptap/core/jsx-runtime',
-        replacement: path.resolve(
-          __dirname,
-          '../../packages/core/dist/jsx-runtime/jsx-runtime.js',
-        ),
+        replacement: path.resolve(__dirname, '../../packages/core/dist/jsx-runtime/jsx-runtime.js'),
       },
       {
         find: '@tiptap/core',
-        replacement: path.resolve(
-          __dirname,
-          '../../packages/core/dist/index.js',
-        ),
+        replacement: path.resolve(__dirname, '../../packages/core/dist/index.js'),
+      },
+      {
+        find: '@tiptap/react',
+        replacement: path.resolve(__dirname, '../../packages/react/dist/index.js'),
+      },
+      {
+        find: '@tiptap/starter-kit',
+        replacement: path.resolve(__dirname, '../../packages/starter-kit/dist/index.js'),
+      },
+      {
+        find: '@tiptap/extension-content-ai-agent',
+        replacement: path.resolve(__dirname, '../../packages/extension-content-ai-agent/dist/index.js'),
       },
     ],
   },

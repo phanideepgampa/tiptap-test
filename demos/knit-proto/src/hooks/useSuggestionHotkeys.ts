@@ -15,8 +15,13 @@ export function useSuggestionHotkeys(options: {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (menuOpen && e.key === 'Escape') { onCloseMenu(); return }
-      if (!diffState) return
+      if (menuOpen && e.key === 'Escape') {
+        onCloseMenu()
+        return
+      }
+      if (!diffState) {
+        return
+      }
       if (e.key === 'Tab') {
         e.preventDefault()
         diffState.accept()

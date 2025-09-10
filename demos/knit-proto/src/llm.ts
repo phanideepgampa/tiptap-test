@@ -19,6 +19,14 @@ export interface ContextItem {
   uri?: string
 }
 
+async function safeText(res: Response): Promise<string> {
+  try {
+    return await res.text()
+  } catch {
+    return ''
+  }
+}
+
 export async function runLLMTransform(options: {
   text: string
   instruction: 'rewrite' | 'shorten' | 'expand' | string
@@ -29,7 +37,7 @@ export async function runLLMTransform(options: {
 
   // Call OpenAI-compatible API directly from the browser
   const apiKey = import.meta.env.VITE_OPENAI_API_KEY
-  if (!apiKey) throw new Error('Missing VITE_OPENAI_API_KEY')
+  if (!apiKey) {throw new Error('Missing VITE_OPENAI_API_KEY')}
 
   const baseUrl = (import.meta.env.VITE_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')
   const model = import.meta.env.VITE_OPENAI_MODEL || 'gpt-4o-mini'
@@ -43,24 +51,17 @@ export async function runLLMTransform(options: {
   ].join(' ')
 
   const ctxBlock = context.length
-    ? `\n\nContext (may be used, optional):\n${context.map((c, i) => `[#${i + 1}] ${c.title ? c.title + ' — ' : ''}${(c.text || '').slice(0, 800)}`).join('\n')}`
+    ? `\n\nContext (may be used, optional):\n${context.map((c, i) => `[#${i + 1}] ${c.title ? `${c.title  } — ` : ''}${(c.text || '').slice(0, 800)}`).join('\n')}`
     : ''
 
-  const user = [
-    `Instruction: ${instruction}`,
-    'Text to transform:',
-    '"""',
-    text,
-    '"""',
-    ctxBlock,
-  ].join('\n')
+  const user = [`Instruction: ${instruction}`, 'Text to transform:', '"""', text, '"""', ctxBlock].join('\n')
 
   // OpenAI chat.completions
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
       model,
@@ -78,10 +79,6 @@ export async function runLLMTransform(options: {
   }
   const data = await res.json()
   const content = data?.choices?.[0]?.message?.content
-  if (typeof content !== 'string') throw new Error('Invalid OpenAI response')
+  if (typeof content !== 'string') {throw new Error('Invalid OpenAI response')}
   return content.trim()
-}
-
-async function safeText(res: Response): Promise<string> {
-  try { return await res.text() } catch { return '' }
 }

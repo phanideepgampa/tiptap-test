@@ -1,22 +1,22 @@
 import './styles.css'
 
-import ContentAiAgent from '@tiptap/extension-content-ai-agent'
+import { Mark } from '@tiptap/core'
+// Content AI agent configured via useAgent hook
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import type { Diff } from 'diff-match-patch'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Mark } from '@tiptap/core'
-import type { RankedSource } from './rag'
-import { prewarmEmbeddings } from './embeddings'
-import { runLLMTransform, llmAvailable } from './llm'
-import DiffPreview from './components/DiffPreview'
-import ContextMenu from './components/ContextMenu'
-import RagSidebar from './components/RagSidebar'
-import useSelectionPreview from './hooks/useSelectionPreview'
-import useSuggestionHotkeys from './hooks/useSuggestionHotkeys'
-import ChatPanel from './components/ChatPanel'
-import useAgent from './hooks/useAgent'
-import useRagContext from './hooks/useRagContext'
+
+import ChatPanel from './components/ChatPanel.tsx'
+import ContextMenu from './components/ContextMenu.tsx'
+import DiffPreview from './components/DiffPreview.tsx'
+import RagSidebar from './components/RagSidebar.tsx'
+import { prewarmEmbeddings } from './embeddings.ts'
+import useAgent from './hooks/useAgent.ts'
+import useRagContext from './hooks/useRagContext.ts'
+import useSelectionPreview from './hooks/useSelectionPreview.ts'
+import useSuggestionHotkeys from './hooks/useSuggestionHotkeys.ts'
+import { llmAvailable } from './llm.ts'
 
 interface DiffState {
   diff: Diff[]
@@ -35,29 +35,10 @@ interface ChatMessage {
   reject?: () => void
 }
 
-// Preset prompts used by the context menu
-const recipes = [
-  { label: 'Rewrite', prompt: 'rewrite' },
-  { label: 'Shorten', prompt: 'shorten' },
-  { label: 'Expand', prompt: 'expand' },
-]
+// Preset prompt names handled by getInstruction()
 
-function runStub({ text, prompt }: { text: string; prompt?: string }): string {
-  if (!prompt || prompt === 'rewrite') {
-    return text
-      .split(/([.!?]\s+)/)
-      .map(s => s.trim())
-      .filter(Boolean)
-      .map(s => s.charAt(0).toUpperCase() + s.slice(1))
-      .join(' ')
-  }
-  if (prompt === 'shorten') {
-    const words = text.split(/\s+/)
-    return words.slice(0, Math.max(1, Math.floor(words.length * 0.6))).join(' ')
-  }
-  // expand
-  return `${text} ${text.length > 0 ? '…' : ''}`
-}
+// Note: stub transform removed in lint pass (LLM is preferred);
+// fallbacks are handled within useAgent when key is absent.
 
 function getInstruction(prompt: string): string {
   const p = (prompt || '').trim().toLowerCase()
@@ -89,27 +70,31 @@ export default function App() {
       setLoadingEmb(true)
       console.log('[App] Starting embeddings prewarm...')
       prewarmEmbeddings()
-        .then(ok => { 
-          if (!cancelled) { 
+        .then(ok => {
+          if (!cancelled) {
             console.log('[App] Embeddings prewarm result:', ok)
             setEmbReady(ok)
-            if (!ok) setEmbError('Failed to load model')
+            if (!ok) {setEmbError('Failed to load model')}
           }
         })
-        .catch((e) => { 
+        .catch(e => {
           if (!cancelled) {
             console.error('[App] Embeddings prewarm error:', e)
             setEmbError(e.message || String(e))
           }
         })
-        .finally(() => { if (!cancelled) setLoadingEmb(false) })
+        .finally(() => {
+          if (!cancelled) {setLoadingEmb(false)}
+        })
     }
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [useEmbeddings, embReady])
 
   // Clear error once embeddings are ready
   useEffect(() => {
-    if (embReady) setEmbError(null)
+    if (embReady) {setEmbError(null)}
   }, [embReady])
 
   // (moved) Recompute context once embeddings become ready — see effect below editor init
@@ -122,15 +107,25 @@ export default function App() {
   const lastRunOrigin = useRef<'auto' | 'recipe' | 'chat' | null>(null)
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
-  const [inlinePrompt, setInlinePrompt] = useState('')
+  // no inline prompt state (handled inside ContextMenu)
 
   // Simple citations mark (local)
-  const CitationMark = useMemo(() => Mark.create({
-    name: 'citation',
-    addAttributes() { return { sources: { default: null } } },
-    parseHTML() { return [{ tag: 'span[data-citation]' }] },
-    renderHTML({ HTMLAttributes }) { return ['span', { 'data-citation': '1', style: 'background:rgba(0,128,255,.08)' }, 0] },
-  }), [])
+  const CitationMark = useMemo(
+    () =>
+      Mark.create({
+        name: 'citation',
+        addAttributes() {
+          return { sources: { default: null } }
+        },
+        parseHTML() {
+          return [{ tag: 'span[data-citation]' }]
+        },
+        renderHTML() {
+          return ['span', { 'data-citation': '1', style: 'background:rgba(0,128,255,.08)' }, 0]
+        },
+      }),
+    [],
+  )
 
   const agentExt = useAgent({
     getContext: () => {
@@ -151,44 +146,48 @@ export default function App() {
             accept: () => {
               payload.accept()
               setDiffState(null)
-              setMessages(ms => ms.map(x => x === next[idx] ? { ...x, content: 'Accepted' } : x))
+              setMessages(ms => ms.map(x => (x === next[idx] ? { ...x, content: 'Accepted' } : x)))
             },
             reject: () => {
               payload.reject()
               setDiffState(null)
-              setMessages(ms => ms.map(x => x === next[idx] ? { ...x, content: 'Rejected' } : x))
+              setMessages(ms => ms.map(x => (x === next[idx] ? { ...x, content: 'Rejected' } : x)))
             },
           }
-          if (idx >= 0) next.splice(idx, 1, aiMsg)
-          else next.push(aiMsg)
+          if (idx >= 0) {next.splice(idx, 1, aiMsg)}
+          else {next.push(aiMsg)}
           return next
         })
       }
     },
-    onSuccess: ({ editor, from, to }) => {
+    onSuccess: ({ editor: ed, from, to }) => {
       if (selectedSourceIds.length > 0) {
-        const selected = sources.filter(s => selectedSourceIds.includes(s.id)).map(s => ({ id: s.id, kind: s.kind, title: s.title, uri: s.uri }))
+        const selected = sources
+          .filter(s => selectedSourceIds.includes(s.id))
+          .map(s => ({ id: s.id, kind: s.kind, title: s.title, uri: s.uri }))
         try {
-          editor.chain().setTextSelection({ from, to }).setMark('citation', { sources: JSON.stringify(selected) }).run()
-        } catch {}
+          ed.chain()
+            .setTextSelection({ from, to })
+            .setMark('citation', { sources: JSON.stringify(selected) })
+            .run()
+        } catch {
+          /* noop */
+        }
       }
     },
   })
 
   const editor = useEditor({
-    extensions: [
-      StarterKit,
-      CitationMark,
-      agentExt,
-    ],
+    extensions: [StarterKit, CitationMark, agentExt],
     autofocus: 'end',
-    content: '<p>Type here, select text, and run a recipe. Tab accepts, Esc rejects. Toggle auto-trigger to see suggestions as you type.</p>',
-    onUpdate: ({ editor }) => {
-      if (!auto) return
+    content:
+      '<p>Type here, select text, and run a recipe. Tab accepts, Esc rejects. Toggle auto-trigger to see suggestions as you type.</p>',
+    onUpdate: ({ editor: ed }) => {
+      if (!auto) {return}
       // Debounce auto trigger after typing
-      if (idleTimer.current) window.clearTimeout(idleTimer.current)
+      if (idleTimer.current) {window.clearTimeout(idleTimer.current)}
       idleTimer.current = window.setTimeout(() => {
-        const { state } = editor as any
+        const { state } = ed as any
         const { from, to } = state.selection
         const sel = state.doc.textBetween(from, to, ' ')
         // Update RAG sources for the current selection
@@ -196,13 +195,15 @@ export default function App() {
           const full = state.doc.textBetween(0, state.doc.content.size, '\n')
           const q = sel || full.slice(0, 400)
           rag.refresh(full, q)
-        } catch {}
+        } catch {
+          /* noop */
+        }
         if (sel && sel.trim().length > 0) {
           setDiffState(null)
           lastRunOrigin.current = 'auto'
           const instruction = getInstruction('rewrite')
           console.log('[Auto] trigger run', { from, to, selLen: sel.length })
-          editor.chain().focus().runContentAiAgent({ prompt: instruction }).run()
+          ed.chain().focus().runContentAiAgent({ prompt: instruction }).run()
         }
       }, 800)
     },
@@ -213,7 +214,7 @@ export default function App() {
 
   // Recompute context once embeddings become ready
   useEffect(() => {
-    if (!editor || !useEmbeddings || !embReady) return
+    if (!editor || !useEmbeddings || !embReady) {return}
     try {
       const state = (editor as any).state
       const full = state.doc.textBetween(0, state.doc.content.size, '\n')
@@ -221,7 +222,9 @@ export default function App() {
       const sel = state.doc.textBetween(from, to, ' ')
       const q = sel || full.slice(0, 400)
       rag.refresh(full, q)
-    } catch {}
+    } catch {
+      /* noop */
+    }
   }, [editor, useEmbeddings, embReady])
 
   // Hotkeys: Tab = accept, Esc = reject / close menu
@@ -241,12 +244,14 @@ export default function App() {
       const { from, to } = state.selection
       const sel = state.doc.textBetween(from, to, ' ')
       console.log('[UI] run()', { prompt, instruction: instruction.slice(0, 80), from, to, selLen: sel?.length })
-    } catch {}
+    } catch {
+      /* noop */
+    }
     editor?.chain().focus().runContentAiAgent({ prompt: instruction }).run()
   }
 
   const sendChat = () => {
-    if (!chatInput.trim()) return
+    if (!chatInput.trim()) {return}
     // Push user message
     setMessages(curr => [...curr, { id: `u-${Date.now()}`, role: 'user', content: chatInput }])
     const prompt = chatInput.trim()
@@ -256,7 +261,9 @@ export default function App() {
       try {
         const size = (editor as any).state.doc.content.size
         ;(editor as any).chain().setTextSelection({ from: 0, to: size }).run()
-      } catch {}
+      } catch {
+        /* noop */
+      }
     }
     // Add pending AI message
     setMessages(curr => [...curr, { id: `ai-p-${Date.now()}`, role: 'ai', content: 'Generating…' }])
@@ -265,12 +272,6 @@ export default function App() {
     lastRunOrigin.current = 'chat'
     editor?.chain().focus().runContentAiAgent({ prompt }).run()
   }
-
-  const selectionLabel = selectionPreview.kind === 'document'
-    ? 'Document'
-    : selectionPreview.kind === 'selection'
-    ? 'Selection'
-    : 'Selection'
 
   return (
     <div className="workspace">
@@ -281,7 +282,9 @@ export default function App() {
         embError={embError}
         sources={sources as any}
         selectedSourceIds={selectedSourceIds}
-        onToggleSource={(id, checked) => rag.setSelectedSourceIds(prev => checked ? [...prev, id] : prev.filter(x => x !== id))}
+        onToggleSource={(id, checked) =>
+          rag.setSelectedSourceIds(prev => (checked ? [...prev, id] : prev.filter(x => x !== id)))
+        }
       />
       <main className="pane" style={{ borderRight: 'none' }}>
         <div className="toolbar">
@@ -296,20 +299,22 @@ export default function App() {
             Use embeddings (local)
           </label>
         </div>
-        <div className="editor-shell"
+        <div
+          className="editor-shell"
           onContextMenu={e => {
-            if (!editor) return
+            if (!editor) {return}
             const sel = (editor as any).state.selection
-            if (!sel || sel.empty) return
+            if (!sel || sel.empty) {return}
             e.preventDefault()
             setMenuPos({ x: e.clientX, y: e.clientY })
-            setInlinePrompt('')
             setMenuOpen(true)
             try {
               const { from, to } = (editor as any).state.selection
               const text = (editor as any).state.doc.textBetween(from, to, ' ')
               console.log('[UI] contextmenu open', { x: e.clientX, y: e.clientY, from, to, selLen: text.length })
-            } catch {}
+            } catch {
+              /* noop */
+            }
           }}
         >
           <EditorContent editor={editor} />
@@ -320,10 +325,26 @@ export default function App() {
             y={menuPos.y}
             modeBadge={llmAvailable() ? 'LLM' : 'Stub'}
             onClose={() => setMenuOpen(false)}
-            onRewrite={() => { console.log('[UI] menu click: rewrite'); setMenuOpen(false); run('rewrite') }}
-            onShorten={() => { console.log('[UI] menu click: shorten'); setMenuOpen(false); run('shorten') }}
-            onExpand={() => { console.log('[UI] menu click: expand'); setMenuOpen(false); run('expand') }}
-            onRunPrompt={(p) => { console.log('[UI] menu inline prompt run', p); setMenuOpen(false); run(p) }}
+            onRewrite={() => {
+              console.log('[UI] menu click: rewrite')
+              setMenuOpen(false)
+              run('rewrite')
+            }}
+            onShorten={() => {
+              console.log('[UI] menu click: shorten')
+              setMenuOpen(false)
+              run('shorten')
+            }}
+            onExpand={() => {
+              console.log('[UI] menu click: expand')
+              setMenuOpen(false)
+              run('expand')
+            }}
+            onRunPrompt={p => {
+              console.log('[UI] menu inline prompt run', p)
+              setMenuOpen(false)
+              run(p)
+            }}
           />
           {diffState ? <DiffPreview diff={diffState.diff} /> : null}
           {diffState && <div className="bubble">Tab = Accept, Esc = Reject</div>}

@@ -1,5 +1,5 @@
-import React from 'react'
 import type { Diff } from 'diff-match-patch'
+import React from 'react'
 
 type ChatRole = 'user' | 'ai'
 interface ChatMessage {
@@ -26,7 +26,12 @@ export function ChatPanel(props: {
   onToggleApplyDoc: (v: boolean) => void
 }) {
   const { messages, selectionPreview, chatInput, onChangeChatInput, onSend, applyDoc, onToggleApplyDoc } = props
-  const selectionLabel = selectionPreview.kind === 'document' ? 'Document' : selectionPreview.kind === 'selection' ? 'Selection' : 'Selection'
+  let selectionLabel = 'Selection'
+  if (selectionPreview.kind === 'document') {
+    selectionLabel = 'Document'
+  } else if (selectionPreview.kind === 'selection') {
+    selectionLabel = 'Selection'
+  }
 
   return (
     <div className="chat">
@@ -37,7 +42,7 @@ export function ChatPanel(props: {
         </div>
         {selectionPreview.text ? (
           <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>
-            {selectionPreview.text.length > 600 ? selectionPreview.text.slice(0, 600) + '…' : selectionPreview.text}
+            {selectionPreview.text.length > 600 ? `${selectionPreview.text.slice(0, 600)}…` : selectionPreview.text}
           </pre>
         ) : (
           <div style={{ color: '#666' }}>No selection. Toggle “Apply to whole document” or select text.</div>
@@ -53,9 +58,21 @@ export function ChatPanel(props: {
               <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 {m.diff.map((part, i) => {
                   const [op, t] = part
-                  if (op === 0) return <span key={i}>{t}</span>
-                  if (op === -1) return <span key={i} style={{ backgroundColor: '#ffcccc', textDecoration: 'line-through' }}>{t}</span>
-                  return <span key={i} style={{ backgroundColor: '#ccffcc' }}>{t}</span>
+                  if (op === 0) {
+                    return <span key={i}>{t}</span>
+                  }
+                  if (op === -1) {
+                    return (
+                      <span key={i} style={{ backgroundColor: '#ffcccc', textDecoration: 'line-through' }}>
+                        {t}
+                      </span>
+                    )
+                  }
+                  return (
+                    <span key={i} style={{ backgroundColor: '#ccffcc' }}>
+                      {t}
+                    </span>
+                  )
                 })}
               </pre>
               <div className="row">
@@ -73,7 +90,11 @@ export function ChatPanel(props: {
           onChange={e => onChangeChatInput(e.target.value)}
           style={{ flex: 1, padding: 8, border: '1px solid #ccc', borderRadius: 6 }}
           placeholder="Ask AI … (e.g., ‘shorten this’)"
-          onKeyDown={e => { if (e.key === 'Enter') onSend() }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              onSend()
+            }
+          }}
         />
         <button onClick={onSend}>Send</button>
       </div>
@@ -86,4 +107,3 @@ export function ChatPanel(props: {
 }
 
 export default ChatPanel
-
